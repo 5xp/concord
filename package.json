@@ -1,5 +1,5 @@
 {
-  "name": "voicelink",
+  "name": "concord",
   "version": "1.0.0",
   "description": "",
   "main": "./dist/index.js",
@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node .",
     "dev": "nodemon --config nodemon.json src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "deploy": "nodemon --config nodemon.json src/deploy-commands.ts",
+    "clear-commands": "nodemon --config nodemon.json src/clear-commands.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,12 +19,14 @@
     "eslint": "^8.44.0",
     "nodemon": "^2.0.22",
     "ts-node": "^10.9.1",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.1.6"
   },
   "engines": {
     "node": ">=16.0.0"
   },
   "dependencies": {
+    "discord.js": "^14.11.0",
     "dotenv": "^16.3.1"
   }
 }
