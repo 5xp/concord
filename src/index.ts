@@ -8,7 +8,12 @@ const envFileName = process.env.NODE_ENV === "development" ? ".dev.env" : ".env"
 config({ path: resolve(process.cwd(), envFileName) });
 
 const client = new ExtendedClient({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates,
+  ],
 });
 
 client.init();
