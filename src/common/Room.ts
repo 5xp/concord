@@ -7,12 +7,18 @@ import {
   BaseGuildTextChannel,
   MessageCollector,
   GuildMember,
+  WebhookMessageCreateOptions,
+  userMention,
+  quote,
+  Colors,
 } from "discord.js";
 import ExtendedClient from "./ExtendedClient";
+import { EmbedBuilder } from "@discordjs/builders";
 
 interface RoomMember {
   member: GuildMember;
   anonymous: boolean;
+  displayName: string;
   index: number;
   avatar: string;
 }
@@ -70,7 +76,7 @@ export default class Room {
   }
 
   private startCollectingMessages(instance: RoomInstance): void {
-    const filter = (message: Message) => !message.webhookId;
+    const filter = (message: Message) => !message.webhookId && !message.system;
     instance.collector = instance.thread.createMessageCollector({ filter });
 
     instance.collector.on("collect", message => {
@@ -79,26 +85,32 @@ export default class Room {
   }
 
   private async synchronizeMessage(message: Message): Promise<void> {
-    if (!message.member) return;
+    if (!message.member || !message.content) return;
 
     const instances = this.instances.filter(instance => instance.thread.id !== message.channelId);
-
-    if (instances.length === 0) return;
 
     const roomMember = this.getOrCreateRoomMember(message);
 
     if (!roomMember) return;
 
-    const displayName = roomMember.anonymous ? `Anonymous ${roomMember.index + 1}` : message.member.displayName;
     const avatarURL = roomMember.avatar;
+    const repliedTo = message.reference ? await message.fetchReference() : undefined;
+
+    const messageOptions: WebhookMessageCreateOptions = {
+      username: roomMember.displayName,
+      avatarURL: avatarURL,
+      allowedMentions: { parse: ["users"] },
+    };
 
     for (const instance of instances) {
-      await instance.webhook.send({
-        content: message.content,
-        username: displayName,
-        avatarURL: avatarURL,
-        threadId: instance.thread.id,
-      });
+      messageOptions.threadId = instance.thread.id;
+      messageOptions.content = message.content;
+
+      if (repliedTo) {
+        messageOptions.content = `${this.getReplyPrefix(instance, repliedTo)} ${messageOptions.content}`;
+      }
+
+      instance.webhook.send(messageOptions).catch(() => this.deleteInstance(instance));
     }
   }
 
@@ -127,14 +139,18 @@ export default class Room {
       member: guildMember,
       anonymous: anonymous,
       index: this.memberCount,
+      displayName: anonymous ? `Anonymous ${this.memberCount + 1}` : guildMember.displayName,
       avatar: anonymous ? this.getAnonymousAvatarURL() : guildMember.user.displayAvatarURL(),
     };
   }
 
   private onRoomMemberCreate(instance: RoomInstance, roomMember: RoomMember): void {
     this.memberCount++;
+    const roomMemberCreateEmbed = this.createMemberJoinEmbed(roomMember);
+    this.sendToAllExcept(instance, { embeds: [roomMemberCreateEmbed] });
     instance.members.push(roomMember);
   }
+
   private createInstanceRoomMember(
     instance: RoomInstance,
     guildMember: GuildMember,
@@ -146,14 +162,24 @@ export default class Room {
     return member;
   }
 
+  private createMemberJoinEmbed(roomMember: RoomMember): EmbedBuilder {
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Blurple)
+      .setFooter({ text: `${roomMember.displayName} joined the room`, iconURL: roomMember.avatar });
+
+    return embed;
+  }
+
   private async getOrCreateWebhook(channel: BaseGuildTextChannel): Promise<Webhook> {
     const webhooks = await channel.fetchWebhooks();
 
     if (webhooks.size > 0) return webhooks.first()!;
 
+    if (!this.client.user) throw new Error("Client user not found");
+
     return channel.createWebhook({
-      name: this.client.user!.username,
-      avatar: this.client.user!.displayAvatarURL(),
+      name: this.client.user.username,
+      avatar: this.client.user.displayAvatarURL(),
     });
   }
 
@@ -184,5 +210,50 @@ export default class Room {
     } while (this.isIdTaken(id));
 
     return id;
+  }
+
+  private getReplyPrefix(instance: RoomInstance, repliedTo: Message): string {
+    const roomMember = this.findMember(repliedTo.author.username);
+    const quotePrefix = repliedTo.content.length > 0 ? quote(repliedTo.content) : "";
+    let mention: string;
+
+    if (!roomMember) {
+      mention = userMention(repliedTo.author.id);
+    } else if (!roomMember.anonymous || instance.members.includes(roomMember)) {
+      mention = userMention(roomMember.member.id);
+    } else {
+      mention = `@${roomMember.displayName}`;
+    }
+
+    return `${quotePrefix}\n${mention}`;
+  }
+
+  private getAllMembers(): Array<RoomMember> {
+    return this.instances.flatMap(instance => instance.members);
+  }
+
+  private findMember(name: string): RoomMember | undefined {
+    const members = this.getAllMembers();
+    return members.find(member => member.displayName.includes(name));
+  }
+
+  private sendToAllExcept(instance: RoomInstance, options: WebhookMessageCreateOptions) {
+    const instances = this.instances.filter(i => i.thread.id !== instance.thread.id);
+
+    for (const instance of instances) {
+      options = {
+        ...options,
+        threadId: instance.thread.id,
+        username: this.client.user?.username,
+        avatarURL: this.client.user?.displayAvatarURL(),
+      };
+
+      instance.webhook.send(options).catch(() => this.deleteInstance(instance));
+    }
+  }
+
+  private deleteInstance(instance: RoomInstance): void {
+    instance.collector?.stop();
+    this.instances.splice(this.instances.indexOf(instance), 1);
   }
 }
