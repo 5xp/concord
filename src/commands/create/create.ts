@@ -9,11 +9,11 @@ export default <Command>{
     .setDMPermission(false)
     .addSubcommandGroup(subcommandGroup =>
       subcommandGroup
-        .setName("room")
-        .setDescription("Creates a 1-on-1 bridge")
+        .setName("text")
+        .setDescription("Creates a 1-on-1 or open text bridge")
         .addSubcommand(subcommand =>
           subcommand
-            .setName("text")
+            .setName("room")
             .setDescription("Creates a 1-on-1 text bridge")
             .addBooleanOption(option =>
               option.setName("anonymous").setDescription("Whether to anonymize your info").setRequired(false),
@@ -21,8 +21,8 @@ export default <Command>{
         )
         .addSubcommand(subcommand =>
           subcommand
-            .setName("voice")
-            .setDescription("Creates a 1-on-1 voice and text bridge")
+            .setName("party")
+            .setDescription("Creates an open text bridge")
             .addBooleanOption(option =>
               option.setName("anonymous").setDescription("Whether to anonymize your info").setRequired(false),
             ),
@@ -30,19 +30,19 @@ export default <Command>{
     )
     .addSubcommandGroup(subcommandGroup =>
       subcommandGroup
-        .setName("party")
-        .setDescription("Creates an open bridge")
+        .setName("voice")
+        .setDescription("Creates a 1-on-1 or open voice and text bridge")
         .addSubcommand(subcommand =>
           subcommand
-            .setName("text")
-            .setDescription("Creates an open text bridge")
+            .setName("room")
+            .setDescription("Creates a 1-on-1 voice and text bridge")
             .addBooleanOption(option =>
               option.setName("anonymous").setDescription("Whether to anonymize your info").setRequired(false),
             ),
         )
         .addSubcommand(subcommand =>
           subcommand
-            .setName("voice")
+            .setName("party")
             .setDescription("Creates an open voice and text bridge")
             .addBooleanOption(option =>
               option.setName("anonymous").setDescription("Whether to anonymize your info").setRequired(false),
@@ -59,11 +59,11 @@ export default <Command>{
       await interaction.guild.members.fetch();
     }
 
-    const subcommandGroup = interaction.options.getSubcommandGroup();
     const subcommand = interaction.options.getSubcommand();
+    const subcommandGroup = interaction.options.getSubcommandGroup();
 
-    const roomType = subcommandGroup === "room" ? "1-on-1" : "Party";
-    const commandModule = await import(`./${subcommand}`);
+    const roomType = subcommand === "room" ? "1-on-1" : "Party";
+    const commandModule = await import(`./${subcommandGroup}`);
     const command: Partial<Command> = commandModule.default;
 
     command.execute?.(interaction, client, roomType);

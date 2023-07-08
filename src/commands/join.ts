@@ -8,9 +8,14 @@ export default <Command>{
     .setName("join")
     .setDescription("Join a room by id")
     .setDMPermission(false)
-    .addStringOption(option => option.setName("id").setDescription("The id of the room to join.").setRequired(true))
-    .addBooleanOption(option =>
-      option.setName("anonymous").setDescription("Whether to anonymize your info").setRequired(false),
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("room")
+        .setDescription("Join a room by id")
+        .addStringOption(option => option.setName("id").setDescription("The id of the room to join.").setRequired(true))
+        .addBooleanOption(option =>
+          option.setName("anonymous").setDescription("Whether to anonymize your info").setRequired(false),
+        ),
     ),
   async execute(interaction: ChatInputCommandInteraction, client: ExtendedClient): Promise<void> {
     const roomId = interaction.options.getString("id", true).toLowerCase();
