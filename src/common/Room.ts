@@ -18,19 +18,20 @@ export default class Room {
   readonly id: string;
   readonly maxInstances: number | undefined;
   readonly maxMembersPerInstance: number | undefined;
-  readonly members = new Array<RoomMember>();
+  readonly memberManager: MemberManager;
   readonly instanceManager: InstanceManager;
 
   constructor(client: ExtendedClient, roomType: "1-on-1" | "Party") {
     this.client = client;
     this.instanceManager = new InstanceManager(this);
+    this.memberManager = new MemberManager(this);
 
     if (roomType === "1-on-1") {
       this.maxInstances = 2;
       this.maxMembersPerInstance = 1;
     }
 
-    this.id = this.getNewRoomId();
+    this.id = this.createRoomId();
     this.client.rooms.set(this.id, this);
   }
 
@@ -52,7 +53,7 @@ export default class Room {
     });
 
     const instance = this.instanceManager.createInstance(thread, webhook);
-    this.createInstanceRoomMember(instance, initiator, anonymous);
+    this.memberManager.createMember(instance, initiator, anonymous);
 
     return true;
   }
@@ -65,49 +66,14 @@ export default class Room {
 
     return (
       instance.members.find(member => member.member.id === message.author.id) ??
-      this.createInstanceRoomMember(instance, message.member, false)
+      this.memberManager.createMember(instance, message.member, false)
     );
   }
 
-  private createMember(guildMember: GuildMember, anonymous: boolean): RoomMember {
-    return <RoomMember>{
-      member: guildMember,
-      anonymous: anonymous,
-      index: this.members.length,
-      displayName: anonymous ? `Anonymous ${this.members.length + 1}` : guildMember.displayName,
-      avatar: anonymous ? this.getAnonymousAvatarURL() : guildMember.user.displayAvatarURL(),
-    };
-  }
-
-  private onMemberCreate(instance: RoomInstance, roomMember: RoomMember): void {
-    this.sendJoinMessage(instance, roomMember);
-    this.members.push(roomMember);
-    instance.members.push(roomMember);
-  }
-
-  private sendJoinMessage(instance: RoomInstance, roomMember: RoomMember): void {
-    const roomMemberCreateEmbed = this.createMemberJoinEmbed(roomMember);
+  sendJoinMessage(instance: RoomInstance, roomMember: RoomMember): void {
+    const roomMemberCreateEmbed = createMemberJoinEmbed(roomMember);
     const instances = this.instanceManager.getAllInstancesExcept(instance);
     this.instanceManager.sendTo(instances, { embeds: [roomMemberCreateEmbed] });
-  }
-
-  private createInstanceRoomMember(
-    instance: RoomInstance,
-    guildMember: GuildMember,
-    anonymous: boolean,
-  ): RoomMember | undefined {
-    if (this.maxMembersPerInstance && instance.members.length >= this.maxMembersPerInstance) return;
-    const member = this.createMember(guildMember, anonymous);
-    this.onMemberCreate(instance, member);
-    return member;
-  }
-
-  private createMemberJoinEmbed(roomMember: RoomMember): EmbedBuilder {
-    const embed = new EmbedBuilder()
-      .setColor(Colors.Blurple)
-      .setFooter({ text: `${roomMember.displayName} joined the room`, iconURL: roomMember.avatar });
-
-    return embed;
   }
 
   private async getOrCreateWebhook(channel: BaseGuildTextChannel): Promise<Webhook> {
@@ -123,30 +89,15 @@ export default class Room {
     });
   }
 
-  private getAnonymousAvatarURL(): string {
-    return `https://cdn.discordapp.com/embed/avatars/${Math.floor(Math.random() * 6)}.png`;
-  }
-
-  private makeId(length: number): string {
-    const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let result = "";
-
-    for (let i = 0; i < length; i++) {
-      result += characters.charAt(Math.floor(Math.random() * characters.length));
-    }
-
-    return result;
-  }
-
   private isIdTaken(id: string): boolean {
     return this.client.rooms.has(id);
   }
 
-  private getNewRoomId(): string {
+  private createRoomId(): string {
     let id: string;
 
     do {
-      id = this.makeId(4);
+      id = makeId(4);
     } while (this.isIdTaken(id));
 
     return id;
@@ -248,10 +199,66 @@ class RoomInstance {
   }
 }
 
+class MemberManager {
+  readonly room: Room;
+  readonly client: ExtendedClient;
+  readonly members = new Array<RoomMember>();
+
+  constructor(room: Room) {
+    this.room = room;
+    this.client = room.client;
+  }
+
+  createMember(instance: RoomInstance, guildMember: GuildMember, anonymous: boolean): RoomMember | undefined {
+    if (this.room.maxMembersPerInstance && instance.members.length >= this.room.maxMembersPerInstance) return;
+    const member = <RoomMember>{
+      member: guildMember,
+      instance: instance,
+      anonymous: anonymous,
+      displayName: anonymous ? `Anonymous ${this.members.length + 1}` : guildMember.displayName,
+      avatar: anonymous ? getAnonymousAvatarURL() : guildMember.user.displayAvatarURL(),
+      index: this.members.length,
+    };
+
+    this.onMemberCreate(instance, member);
+    return member;
+  }
+
+  onMemberCreate(instance: RoomInstance, member: RoomMember): void {
+    this.members.push(member);
+    instance.members.push(member);
+    this.room.sendJoinMessage(instance, member);
+  }
+}
+
 interface RoomMember {
   member: GuildMember;
+  instance: RoomInstance;
   anonymous: boolean;
   displayName: string;
   index: number;
   avatar: string;
+}
+
+function getAnonymousAvatarURL(): string {
+  return `https://cdn.discordapp.com/embed/avatars/${Math.floor(Math.random() * 6)}.png`;
+}
+
+function makeId(length: number): string {
+  const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  return result;
+}
+
+function createMemberJoinEmbed(roomMember: RoomMember): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setColor(Colors.Blurple)
+    .setFooter({ text: `${roomMember.displayName} joined the room`, iconURL: roomMember.avatar });
+
+  return embed;
 }
