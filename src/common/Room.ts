@@ -8,39 +8,22 @@ import {
   MessageCollector,
   GuildMember,
   WebhookMessageCreateOptions,
-  userMention,
-  quote,
   Colors,
 } from "discord.js";
 import ExtendedClient from "./ExtendedClient";
 import { EmbedBuilder } from "@discordjs/builders";
 
-interface RoomMember {
-  member: GuildMember;
-  anonymous: boolean;
-  displayName: string;
-  index: number;
-  avatar: string;
-}
-
-interface RoomInstance {
-  readonly initiator: RoomMember;
-  readonly thread: ThreadChannel;
-  readonly webhook: Webhook;
-  collector?: MessageCollector;
-  members: Array<RoomMember>;
-}
-
 export default class Room {
   readonly client: ExtendedClient;
+  readonly id: string;
   readonly maxInstances: number | undefined;
   readonly maxMembersPerInstance: number | undefined;
-  readonly id: string;
-  memberCount = 0;
-  instances = new Array<RoomInstance>();
+  readonly members = new Array<RoomMember>();
+  readonly instanceManager: InstanceManager;
 
   constructor(client: ExtendedClient, roomType: "1-on-1" | "Party") {
     this.client = client;
+    this.instanceManager = new InstanceManager(this);
 
     if (roomType === "1-on-1") {
       this.maxInstances = 2;
@@ -59,7 +42,7 @@ export default class Room {
   async createThread(message: Message, initiator: GuildMember, anonymous: boolean): Promise<boolean> {
     if (message.channel.type !== ChannelType.GuildText) throw new Error("Invalid text channel");
 
-    if (this.maxInstances && this.instances.length >= this.maxInstances) return false;
+    if (this.maxInstances && this.instanceManager.instances.length >= this.maxInstances) return false;
 
     const webhook = await this.getOrCreateWebhook(message.channel);
 
@@ -68,87 +51,44 @@ export default class Room {
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
     });
 
-    const member = this.createRoomMember(initiator, anonymous);
-    const instance = this.createRoomInstance(member, thread, webhook);
+    const instance = this.instanceManager.createInstance(thread, webhook);
+    this.createInstanceRoomMember(instance, initiator, anonymous);
 
-    this.startCollectingMessages(instance);
     return true;
   }
 
-  private startCollectingMessages(instance: RoomInstance): void {
-    const filter = (message: Message) => !message.webhookId && !message.system;
-    instance.collector = instance.thread.createMessageCollector({ filter });
+  getOrCreateMember(message: Message): RoomMember | undefined {
+    const instance = this.instanceManager.getInstance(message.channelId);
 
-    instance.collector.on("collect", message => {
-      this.synchronizeMessage(message);
-    });
-  }
-
-  private async synchronizeMessage(message: Message): Promise<void> {
-    if (!message.member || !message.content) return;
-
-    const instances = this.instances.filter(instance => instance.thread.id !== message.channelId);
-
-    const roomMember = this.getOrCreateRoomMember(message);
-
-    if (!roomMember) return;
-
-    const avatarURL = roomMember.avatar;
-    const repliedTo = message.reference ? await message.fetchReference() : undefined;
-
-    const messageOptions: WebhookMessageCreateOptions = {
-      username: roomMember.displayName,
-      avatarURL: avatarURL,
-      allowedMentions: { parse: ["users"] },
-    };
-
-    for (const instance of instances) {
-      messageOptions.threadId = instance.thread.id;
-      messageOptions.content = message.content;
-
-      if (repliedTo) {
-        messageOptions.content = `${this.getReplyPrefix(instance, repliedTo)} ${messageOptions.content}`;
-      }
-
-      instance.webhook.send(messageOptions).catch(() => this.deleteInstance(instance));
-    }
-  }
-
-  private getOrCreateRoomMember(message: Message): RoomMember | undefined {
-    const instance = this.instances.find(instance => instance.thread.id === message.channelId);
     if (!instance) throw new Error("Instance not found");
-
-    const roomMember = instance.members.find(member => member.member.id === message.author.id);
-    if (roomMember) return roomMember;
-
     if (!message.member) throw new Error("Member not found");
 
-    const member = this.createInstanceRoomMember(instance, message.member, false);
-    return member;
+    return (
+      instance.members.find(member => member.member.id === message.author.id) ??
+      this.createInstanceRoomMember(instance, message.member, false)
+    );
   }
 
-  private createRoomInstance(initiator: RoomMember, thread: ThreadChannel, webhook: Webhook): RoomInstance {
-    const instance: RoomInstance = { initiator, thread, webhook, members: [] };
-    this.onRoomMemberCreate(instance, initiator);
-    this.instances.push(instance);
-    return instance;
-  }
-
-  private createRoomMember(guildMember: GuildMember, anonymous: boolean): RoomMember {
+  private createMember(guildMember: GuildMember, anonymous: boolean): RoomMember {
     return <RoomMember>{
       member: guildMember,
       anonymous: anonymous,
-      index: this.memberCount,
-      displayName: anonymous ? `Anonymous ${this.memberCount + 1}` : guildMember.displayName,
+      index: this.members.length,
+      displayName: anonymous ? `Anonymous ${this.members.length + 1}` : guildMember.displayName,
       avatar: anonymous ? this.getAnonymousAvatarURL() : guildMember.user.displayAvatarURL(),
     };
   }
 
-  private onRoomMemberCreate(instance: RoomInstance, roomMember: RoomMember): void {
-    this.memberCount++;
-    const roomMemberCreateEmbed = this.createMemberJoinEmbed(roomMember);
-    this.sendToAllExcept(instance, { embeds: [roomMemberCreateEmbed] });
+  private onMemberCreate(instance: RoomInstance, roomMember: RoomMember): void {
+    this.sendJoinMessage(instance, roomMember);
+    this.members.push(roomMember);
     instance.members.push(roomMember);
+  }
+
+  private sendJoinMessage(instance: RoomInstance, roomMember: RoomMember): void {
+    const roomMemberCreateEmbed = this.createMemberJoinEmbed(roomMember);
+    const instances = this.instanceManager.getAllInstancesExcept(instance);
+    this.instanceManager.sendTo(instances, { embeds: [roomMemberCreateEmbed] });
   }
 
   private createInstanceRoomMember(
@@ -157,8 +97,8 @@ export default class Room {
     anonymous: boolean,
   ): RoomMember | undefined {
     if (this.maxMembersPerInstance && instance.members.length >= this.maxMembersPerInstance) return;
-    const member = this.createRoomMember(guildMember, anonymous);
-    this.onRoomMemberCreate(instance, member);
+    const member = this.createMember(guildMember, anonymous);
+    this.onMemberCreate(instance, member);
     return member;
   }
 
@@ -211,49 +151,107 @@ export default class Room {
 
     return id;
   }
+}
 
-  private getReplyPrefix(instance: RoomInstance, repliedTo: Message): string {
-    const roomMember = this.findMember(repliedTo.author.username);
-    const quotePrefix = repliedTo.content.length > 0 ? quote(repliedTo.content) : "";
-    let mention: string;
+class InstanceManager {
+  readonly room: Room;
+  readonly client: ExtendedClient;
+  readonly instances = new Array<RoomInstance>();
 
-    if (!roomMember) {
-      mention = userMention(repliedTo.author.id);
-    } else if (!roomMember.anonymous || instance.members.includes(roomMember)) {
-      mention = userMention(roomMember.member.id);
-    } else {
-      mention = `@${roomMember.displayName}`;
-    }
-
-    return `${quotePrefix}\n${mention}`;
+  constructor(room: Room) {
+    this.room = room;
+    this.client = room.client;
   }
 
-  private getAllMembers(): Array<RoomMember> {
-    return this.instances.flatMap(instance => instance.members);
+  createInstance(thread: ThreadChannel, webhook: Webhook): RoomInstance {
+    const instance = new RoomInstance(thread, webhook);
+
+    instance.collectMessages(message => {
+      this.synchronizeMessage(message);
+    });
+
+    this.instances.push(instance);
+
+    return instance;
   }
 
-  private findMember(name: string): RoomMember | undefined {
-    const members = this.getAllMembers();
-    return members.find(member => member.displayName.includes(name));
+  async synchronizeMessage(message: Message): Promise<void> {
+    if (!message.member || !message.content) return;
+
+    const instance = this.getInstance(message.channelId);
+    if (!instance) return;
+
+    const roomMember = this.room.getOrCreateMember(message);
+    if (!roomMember) return;
+
+    const otherInstances = this.getAllInstancesExcept(instance);
+    if (!otherInstances) return;
+
+    const messageOptions: WebhookMessageCreateOptions = {
+      username: roomMember.displayName,
+      avatarURL: roomMember.avatar,
+      allowedMentions: { parse: ["users"] },
+      content: message.content,
+    };
+
+    this.sendTo(otherInstances, messageOptions);
   }
 
-  private sendToAllExcept(instance: RoomInstance, options: WebhookMessageCreateOptions) {
-    const instances = this.instances.filter(i => i.thread.id !== instance.thread.id);
-
+  sendTo(instances: RoomInstance[], options: WebhookMessageCreateOptions): void {
     for (const instance of instances) {
       options = {
         ...options,
         threadId: instance.thread.id,
-        username: this.client.user?.username,
-        avatarURL: this.client.user?.displayAvatarURL(),
       };
+
+      if (!options.username) {
+        options.username = this.client.user?.username;
+        options.avatarURL = this.client.user?.displayAvatarURL();
+      }
 
       instance.webhook.send(options).catch(() => this.deleteInstance(instance));
     }
   }
 
-  private deleteInstance(instance: RoomInstance): void {
+  deleteInstance(instance: RoomInstance): void {
     instance.collector?.stop();
     this.instances.splice(this.instances.indexOf(instance), 1);
   }
+
+  getAllInstancesExcept(instance: RoomInstance): RoomInstance[] {
+    return this.instances.filter(i => i !== instance);
+  }
+
+  getInstance(threadId: string): RoomInstance | undefined {
+    return this.instances.find(i => i.thread.id === threadId);
+  }
+}
+
+class RoomInstance {
+  readonly thread: ThreadChannel;
+  readonly webhook: Webhook;
+  readonly members = new Array<RoomMember>();
+  collector?: MessageCollector;
+
+  constructor(thread: ThreadChannel, webhook: Webhook) {
+    this.thread = thread;
+    this.webhook = webhook;
+  }
+
+  collectMessages(callback: (message: Message) => void): void {
+    const filter = (message: Message) => !message.webhookId && !message.system;
+    this.collector = this.thread.createMessageCollector({ filter });
+
+    this.collector.on("collect", message => {
+      callback(message);
+    });
+  }
+}
+
+interface RoomMember {
+  member: GuildMember;
+  anonymous: boolean;
+  displayName: string;
+  index: number;
+  avatar: string;
 }
