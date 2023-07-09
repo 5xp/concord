@@ -1,4 +1,5 @@
 import {
+  Collection,
   Message,
   ThreadAutoArchiveDuration,
   ThreadChannel,
@@ -9,11 +10,30 @@ import {
   GuildMember,
   WebhookMessageCreateOptions,
   Colors,
+  EmbedBuilder,
 } from "discord.js";
 import ExtendedClient from "./ExtendedClient";
-import { EmbedBuilder } from "@discordjs/builders";
 
-export default class Room {
+export default class RoomManager {
+  readonly client: ExtendedClient;
+  readonly rooms = new Collection<string, Room>();
+
+  constructor(client: ExtendedClient) {
+    this.client = client;
+  }
+
+  createRoom(roomType: "1-on-1" | "Party"): Room {
+    const room = new Room(this.client, roomType);
+    this.rooms.set(room.id, room);
+    return room;
+  }
+
+  getRoom(id: string): Room | undefined {
+    return this.rooms.get(id);
+  }
+}
+
+class Room {
   readonly client: ExtendedClient;
   readonly id: string;
   readonly maxInstances: number | undefined;
@@ -32,12 +52,6 @@ export default class Room {
     }
 
     this.id = this.createRoomId();
-    this.client.rooms.set(this.id, this);
-  }
-
-  static fromId(client: ExtendedClient, id: string): Room | undefined {
-    const room = client.rooms.get(id);
-    if (room) return room;
   }
 
   async createThread(message: Message, initiator: GuildMember, anonymous: boolean): Promise<boolean> {
@@ -45,7 +59,7 @@ export default class Room {
 
     if (this.maxInstances && this.instanceManager.instances.length >= this.maxInstances) return false;
 
-    const webhook = await this.getOrCreateWebhook(message.channel);
+    const webhook = await getOrCreateWebhook(message.channel);
 
     const thread = await message.startThread({
       name: `Room ${this.id}`,
@@ -76,21 +90,8 @@ export default class Room {
     this.instanceManager.sendTo(instances, { embeds: [roomMemberCreateEmbed] });
   }
 
-  private async getOrCreateWebhook(channel: BaseGuildTextChannel): Promise<Webhook> {
-    const webhooks = await channel.fetchWebhooks();
-
-    if (webhooks.size > 0) return webhooks.first()!;
-
-    if (!this.client.user) throw new Error("Client user not found");
-
-    return channel.createWebhook({
-      name: this.client.user.username,
-      avatar: this.client.user.displayAvatarURL(),
-    });
-  }
-
   private isIdTaken(id: string): boolean {
-    return this.client.rooms.has(id);
+    return !!this.client.rooms.getRoom(id);
   }
 
   private createRoomId(): string {
@@ -261,4 +262,17 @@ function createMemberJoinEmbed(roomMember: RoomMember): EmbedBuilder {
     .setFooter({ text: `${roomMember.displayName} joined the room`, iconURL: roomMember.avatar });
 
   return embed;
+}
+
+async function getOrCreateWebhook(channel: BaseGuildTextChannel): Promise<Webhook> {
+  const webhooks = await channel.fetchWebhooks();
+
+  if (webhooks.size > 0) return webhooks.first()!;
+
+  if (!channel.client.user) throw new Error("Client user not found");
+
+  return channel.createWebhook({
+    name: channel.client.user.username,
+    avatar: channel.client.user.displayAvatarURL(),
+  });
 }

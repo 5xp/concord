@@ -1,7 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, inlineCode } from "discord.js";
 import Command from "@common/Command";
 import ExtendedClient from "@common/ExtendedClient";
-import Room from "@common/Room";
 
 export default <Command>{
   data: new SlashCommandBuilder()
@@ -19,7 +18,7 @@ export default <Command>{
     ),
   async execute(interaction: ChatInputCommandInteraction, client: ExtendedClient): Promise<void> {
     const roomId = interaction.options.getString("id", true).toLowerCase();
-    const room = Room.fromId(client, roomId);
+    const room = client.rooms.getRoom(roomId);
     const anonymous = interaction.options.getBoolean("anonymous") ?? false;
 
     if (!interaction.inCachedGuild()) {

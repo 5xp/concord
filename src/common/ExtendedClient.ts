@@ -2,14 +2,15 @@ import fs from "fs";
 import path from "path";
 import { Client, ClientOptions, Collection } from "discord.js";
 import Command from "./Command";
-import Room from "./Room";
+import RoomManager from "./Room";
 
 export default class ExtendedClient extends Client {
   commands: Collection<string, Command> = new Collection();
-  rooms: Collection<string, Room> = new Collection();
+  rooms: RoomManager;
 
   constructor(options: ClientOptions) {
     super(options);
+    this.rooms = new RoomManager(this);
   }
 
   async init(): Promise<void> {
