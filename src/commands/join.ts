@@ -37,7 +37,5 @@ export default <Command>{
       interaction.editReply({ content: `Room ${inlineCode(room.id)} is full!` });
       return;
     }
-
-    interaction.editReply({ content: `Joined room ${inlineCode(room.id)}` });
   },
 };

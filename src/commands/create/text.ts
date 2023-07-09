@@ -11,7 +11,7 @@ export default <Partial<Command>>{
     const room = client.rooms.createRoom(roomType);
     const anonymous = interaction.options.getBoolean("anonymous") ?? false;
 
-    const response = await interaction.reply({ content: `Creating room ${inlineCode(room.id)}...`, fetchReply: true });
+    const response = await interaction.reply({ content: `Creating room...`, fetchReply: true });
 
     if (!interaction.inCachedGuild()) {
       throw new Error("Interaction is not in cached guild");
@@ -20,10 +20,9 @@ export default <Partial<Command>>{
     const created = await room.createThread(response, interaction.member, anonymous);
 
     if (!created) {
+      client.rooms.deleteRoom(room.id);
       interaction.editReply("Room could not be created.");
       return;
     }
-
-    interaction.editReply({ content: `Created room ${inlineCode(room.id)}` });
   },
 };
